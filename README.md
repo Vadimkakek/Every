@@ -1,16 +1,17 @@
 # Every — EVM RPC Verifier
 
-Every is a small, dependency-free CLI for checking the health and identity of
+Every is a small, dependency-free CLI for checking and comparing the health of
 EVM-compatible JSON-RPC endpoints.
 
 It answers a few practical questions quickly:
 
-- Is the endpoint responding?
+- Is an endpoint responding?
 - Which chain is it connected to?
 - Which client implementation is behind it?
 - What block height does it report?
 - How reliable is it over repeated requests?
 - What latency does it have right now?
+- Which endpoint in a group looks healthiest?
 - Can the result be consumed as JSON in CI or scripts?
 
 ## Requirements
@@ -36,6 +37,7 @@ every https://your-rpc.example
 
 ```text
 every <rpc-url> [options]
+every <rpc-url> <rpc-url> [...] [options]
 
 Options:
   --samples <n>    Number of health samples (1-20, default: 3)
@@ -44,16 +46,24 @@ Options:
   -h, --help       Show help
 ```
 
-Example:
+Check one endpoint:
 
 ```bash
 every https://your-rpc.example --samples 5
 ```
 
-Machine-readable output:
+Compare several endpoints:
 
 ```bash
-every https://your-rpc.example --json
+every https://rpc-one.example https://rpc-two.example https://rpc-three.example
+```
+
+Every ranks batch results by success rate first and average latency second.
+
+Machine-readable output works for both single and batch checks:
+
+```bash
+every https://rpc-one.example https://rpc-two.example --json
 ```
 
 ## What is checked
@@ -68,11 +78,21 @@ nodes:
 For health sampling, `eth_blockNumber` is repeated a configurable number of
 times and Every reports success rate plus min, max, and average latency.
 
+## Privacy and endpoint labels
+
+RPC URLs often contain provider API keys in their path or query string. Batch
+results intentionally do not echo the full URL. They display only the protocol
+and host, for example `https://rpc.example`.
+
+This keeps a URL such as
+`https://rpc.example/v3/your-secret-token` from being reproduced in normal or
+JSON output.
+
 ## Exit codes
 
-- `0` — all health samples succeeded
-- `1` — invalid input or the RPC check could not be completed
-- `2` — the endpoint responded, but one or more health samples failed
+- `0` — all checked endpoints are healthy
+- `1` — invalid input or the check could not be started
+- `2` — at least one checked endpoint is degraded or failed
 
 ## Development
 
@@ -87,13 +107,14 @@ against Node.js 20 and 22.
 
 ## Security
 
-RPC URLs can contain API keys. Every does not intentionally print the endpoint
-back to stdout, and local `.env` files are ignored by git. Never commit private
-RPC URLs, wallet keys, seed phrases, or credentials to the repository.
+RPC URLs can contain API keys. Every does not intentionally print full endpoint
+URLs back to stdout, and local `.env` files are ignored by git. Never commit
+private RPC URLs, wallet keys, seed phrases, or credentials to the repository.
+
+See [SECURITY.md](./SECURITY.md) for the repository security policy.
 
 ## Roadmap
 
-- optional batch mode for multiple endpoints
 - chain name resolution
 - response consistency checks
 - percentile latency metrics
