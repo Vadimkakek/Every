@@ -1,0 +1,25 @@
+{
+  "name": "every-rpc",
+  "version": "0.1.0",
+  "description": "A small CLI for checking EVM-compatible JSON-RPC endpoints.",
+  "type": "module",
+  "bin": {
+    "every": "./src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "ethereum",
+    "evm",
+    "rpc",
+    "json-rpc",
+    "cli",
+    "web3"
+  ],
+  "license": "MIT"
+}
