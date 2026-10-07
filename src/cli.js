@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 
 import { checkEndpoint } from "./check.js";
+import { compareEndpoints } from "./compare.js";
 
 const HELP = `
 Every — EVM RPC Verifier
 
 Usage:
   every <rpc-url> [options]
+  every <rpc-url> <rpc-url> [...] [options]
   node src/cli.js <rpc-url> [options]
 
 Options:
@@ -28,7 +30,7 @@ function parseInteger(value, flag) {
 
 export function parseArgs(argv) {
   const options = {
-    endpoint: null,
+    endpoints: [],
     samples: 3,
     timeoutMs: 5000,
     json: false,
@@ -72,11 +74,7 @@ export function parseArgs(argv) {
       throw new Error(`Unknown option: ${arg}`);
     }
 
-    if (options.endpoint) {
-      throw new Error("Only one RPC endpoint can be checked at a time");
-    }
-
-    options.endpoint = arg;
+    options.endpoints.push(arg);
   }
 
   return options;
@@ -100,32 +98,83 @@ export function formatHuman(result) {
   ].join("\n");
 }
 
+export function formatBatchHuman(comparison) {
+  const lines = [
+    `Every RPC comparison — ${comparison.healthy}/${comparison.endpoints} healthy`,
+    "",
+  ];
+
+  for (const result of comparison.results) {
+    if (result.error) {
+      lines.push(
+        `#${result.rank} ${result.endpoint}`,
+        `  Status:  failed`,
+        `  Error:   ${result.error}`,
+        "",
+      );
+      continue;
+    }
+
+    lines.push(
+      `#${result.rank} ${result.endpoint}`,
+      `  Chain:   ${result.network.chainId}`,
+      `  Health:  ${result.health.successRate.toFixed(2)}%`,
+      `  Latency: ${formatLatency(result.health.averageLatencyMs)}`,
+      "",
+    );
+  }
+
+  return lines.join("\n").trimEnd();
+}
+
 export async function main(argv = process.argv.slice(2)) {
-  const options = parseArgs(argv);
+  let options;
+
+  try {
+    options = parseArgs(argv);
+  } catch (error) {
+    console.error(`Every failed: ${error.message}`);
+    return 1;
+  }
 
   if (options.help) {
     console.log(HELP);
     return 0;
   }
 
-  if (!options.endpoint) {
+  if (options.endpoints.length === 0) {
     console.error(HELP);
     return 1;
   }
 
   try {
-    const result = await checkEndpoint(options.endpoint, {
+    if (options.endpoints.length === 1) {
+      const result = await checkEndpoint(options.endpoints[0], {
+        samples: options.samples,
+        timeoutMs: options.timeoutMs,
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(formatHuman(result));
+      }
+
+      return result.health.ok ? 0 : 2;
+    }
+
+    const comparison = await compareEndpoints(options.endpoints, {
       samples: options.samples,
       timeoutMs: options.timeoutMs,
     });
 
     if (options.json) {
-      console.log(JSON.stringify(result, null, 2));
+      console.log(JSON.stringify(comparison, null, 2));
     } else {
-      console.log(formatHuman(result));
+      console.log(formatBatchHuman(comparison));
     }
 
-    return result.health.ok ? 0 : 2;
+    return comparison.healthy === comparison.endpoints ? 0 : 2;
   } catch (error) {
     console.error(`Every failed: ${error.message}`);
     return 1;
