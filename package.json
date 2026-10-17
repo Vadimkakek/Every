@@ -1,7 +1,7 @@
 {
   "name": "every-rpc",
-  "version": "0.1.0",
-  "description": "A small CLI for checking EVM-compatible JSON-RPC endpoints.",
+  "version": "0.2.0",
+  "description": "A small CLI for checking and comparing EVM-compatible JSON-RPC endpoints.",
   "type": "module",
   "bin": {
     "every": "./src/cli.js"
