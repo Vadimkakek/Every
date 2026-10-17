@@ -12,10 +12,11 @@ Usage:
   node src/cli.js <rpc-url> [options]
 
 Options:
-  --samples <n>    Number of health samples (1-20, default: 3)
-  --timeout <ms>   Per-request timeout (100-60000, default: 5000)
-  --json           Print machine-readable JSON
-  -h, --help       Show this help
+  --samples <n>          Number of health samples (1-20, default: 3)
+  --timeout <ms>         Per-request timeout (100-60000, default: 5000)
+  --max-block-lag <n>    Mark batch endpoints stale above this lag (default: 3)
+  --json                 Print machine-readable JSON
+  -h, --help             Show this help
 `.trim();
 
 function parseInteger(value, flag) {
@@ -33,6 +34,7 @@ export function parseArgs(argv) {
     endpoints: [],
     samples: 3,
     timeoutMs: 5000,
+    maxBlockLag: 3,
     json: false,
     help: false,
   };
@@ -70,6 +72,16 @@ export function parseArgs(argv) {
       continue;
     }
 
+    if (arg === "--max-block-lag") {
+      const value = argv[index + 1];
+      if (value === undefined) {
+        throw new Error("--max-block-lag requires a value");
+      }
+      options.maxBlockLag = parseInteger(value, "--max-block-lag");
+      index += 1;
+      continue;
+    }
+
     if (arg.startsWith("-")) {
       throw new Error(`Unknown option: ${arg}`);
     }
@@ -98,26 +110,55 @@ export function formatHuman(result) {
   ].join("\n");
 }
 
+function batchStatus(result) {
+  if (result.error) return "failed";
+  if (result.consistency?.chainMismatch) return "chain-mismatch";
+  if (result.consistency?.stale) return "stale";
+  if (!result.health.ok) return "degraded";
+  return "healthy";
+}
+
 export function formatBatchHuman(comparison) {
   const lines = [
     `Every RPC comparison — ${comparison.healthy}/${comparison.endpoints} healthy`,
-    "",
   ];
+
+  if (comparison.consistency.sameChain) {
+    const chainId = comparison.consistency.chainIds[0] ?? "n/a";
+    lines.push(
+      `Chain ID: ${chainId}`,
+      `Highest block: ${comparison.consistency.highestBlock ?? "n/a"}`,
+      `Stale threshold: >${comparison.consistency.maxBlockLag} blocks behind`,
+    );
+  } else {
+    lines.push(
+      `Chain consistency: mismatch (${comparison.consistency.chainIds.join(", ")})`,
+    );
+  }
+
+  lines.push("");
 
   for (const result of comparison.results) {
     if (result.error) {
       lines.push(
         `#${result.rank} ${result.endpoint}`,
-        `  Status:  failed`,
+        "  Status:  failed",
         `  Error:   ${result.error}`,
         "",
       );
       continue;
     }
 
+    const lag = result.consistency?.blockLag;
+    const block = lag === null
+      ? result.network.blockNumber
+      : `${result.network.blockNumber} (-${lag})`;
+
     lines.push(
       `#${result.rank} ${result.endpoint}`,
+      `  Status:  ${batchStatus(result)}`,
       `  Chain:   ${result.network.chainId}`,
+      `  Block:   ${block}`,
       `  Health:  ${result.health.successRate.toFixed(2)}%`,
       `  Latency: ${formatLatency(result.health.averageLatencyMs)}`,
       "",
@@ -166,6 +207,7 @@ export async function main(argv = process.argv.slice(2)) {
     const comparison = await compareEndpoints(options.endpoints, {
       samples: options.samples,
       timeoutMs: options.timeoutMs,
+      maxBlockLag: options.maxBlockLag,
     });
 
     if (options.json) {

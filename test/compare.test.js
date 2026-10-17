@@ -3,26 +3,29 @@ import assert from "node:assert/strict";
 
 import { compareEndpoints } from "../src/compare.js";
 
-function createComparisonMock() {
+function createComparisonMock(config = {}) {
   const blockCalls = new Map();
 
   return async (url, options) => {
     const request = JSON.parse(options.body);
     const hostname = new URL(url).hostname;
+    const endpoint = config[hostname] ?? {};
+    const chainId = endpoint.chainId ?? "0x1";
+    const blockNumber = endpoint.blockNumber ?? "0x10";
 
     if (request.method === "eth_blockNumber") {
       const count = (blockCalls.get(hostname) || 0) + 1;
       blockCalls.set(hostname, count);
 
-      if (hostname === "slow.example" && count === 4) {
+      if (endpoint.failBlockCall === count) {
         throw new Error("temporary upstream failure");
       }
     }
 
     const results = {
-      eth_chainId: "0x1",
+      eth_chainId: chainId,
       web3_clientVersion: "Every/TestClient/v1.0.0",
-      eth_blockNumber: "0x10",
+      eth_blockNumber: blockNumber,
     };
 
     return {
@@ -47,7 +50,9 @@ test("compareEndpoints ranks healthier endpoints first", async () => {
     ],
     {
       samples: 3,
-      fetchImpl: createComparisonMock(),
+      fetchImpl: createComparisonMock({
+        "slow.example": { failBlockCall: 4 },
+      }),
     },
   );
 
@@ -56,6 +61,74 @@ test("compareEndpoints ranks healthier endpoints first", async () => {
   assert.equal(result.results[0].health.successRate, 100);
   assert.equal(result.results[1].endpoint, "https://slow.example");
   assert.equal(result.results[1].health.successRate, 66.67);
+});
+
+test("compareEndpoints marks endpoints stale by block lag", async () => {
+  const result = await compareEndpoints(
+    ["https://fresh.example", "https://behind.example"],
+    {
+      samples: 1,
+      maxBlockLag: 3,
+      fetchImpl: createComparisonMock({
+        "fresh.example": { blockNumber: "0x64" },
+        "behind.example": { blockNumber: "0x5f" },
+      }),
+    },
+  );
+
+  assert.equal(result.consistency.sameChain, true);
+  assert.equal(result.consistency.highestBlock, "100");
+  assert.equal(result.healthy, 1);
+
+  const behind = result.results.find(
+    (entry) => entry.endpoint === "https://behind.example",
+  );
+
+  assert.equal(behind.consistency.blockLag, 5);
+  assert.equal(behind.consistency.stale, true);
+  assert.equal(behind.ok, false);
+});
+
+test("compareEndpoints accepts endpoints within the block lag threshold", async () => {
+  const result = await compareEndpoints(
+    ["https://fresh.example", "https://near.example"],
+    {
+      samples: 1,
+      maxBlockLag: 3,
+      fetchImpl: createComparisonMock({
+        "fresh.example": { blockNumber: "0x64" },
+        "near.example": { blockNumber: "0x62" },
+      }),
+    },
+  );
+
+  assert.equal(result.healthy, 2);
+  assert.equal(
+    result.results.find((entry) => entry.endpoint === "https://near.example")
+      .consistency.stale,
+    false,
+  );
+});
+
+test("compareEndpoints flags chain ID mismatches", async () => {
+  const result = await compareEndpoints(
+    ["https://one.example", "https://two.example"],
+    {
+      samples: 1,
+      fetchImpl: createComparisonMock({
+        "one.example": { chainId: "0x1", blockNumber: "0x64" },
+        "two.example": { chainId: "0xa", blockNumber: "0x64" },
+      }),
+    },
+  );
+
+  assert.equal(result.consistency.sameChain, false);
+  assert.deepEqual(result.consistency.chainIds.sort(), ["1", "10"]);
+  assert.equal(result.healthy, 0);
+  assert.equal(
+    result.results.every((entry) => entry.consistency.chainMismatch),
+    true,
+  );
 });
 
 test("compareEndpoints never exposes endpoint paths or query credentials", async () => {
@@ -75,6 +148,16 @@ test("compareEndpoints never exposes endpoint paths or query credentials", async
   assert.equal(serialized.includes("not-a-real-key"), false);
   assert.equal(serialized.includes("/v3/"), false);
   assert.equal(serialized.includes("apikey="), false);
+});
+
+test("compareEndpoints validates max block lag", async () => {
+  await assert.rejects(
+    compareEndpoints(
+      ["https://one.example", "https://two.example"],
+      { maxBlockLag: -1 },
+    ),
+    /max block lag must be an integer between 0 and 1000000/,
+  );
 });
 
 test("compareEndpoints requires at least two endpoints", async () => {

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0
+
+### Added
+
+- block-height consistency checks for batch RPC comparisons
+- stale endpoint detection with configurable `--max-block-lag`
+- chain ID mismatch detection across compared endpoints
+- consistency metadata in JSON output
+- health ranking that pushes stale, mismatched, and degraded endpoints below healthy ones
+
 ## 0.1.0
 
 Initial public release of Every.
